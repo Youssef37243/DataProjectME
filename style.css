@@ -1,3 +1,4 @@
+/* style.css */
 body {
   font-family: Arial, sans-serif;
   margin: 20px;
@@ -7,20 +8,40 @@ body {
 h1 {
   text-align: center;
   margin-bottom: 20px;
+  font-size: 2rem; /* Larger heading */
 }
 
 table {
   margin: 0 auto;
   border-collapse: collapse;
-  width: 80%;
+  width: 95%; /* Make the table wider */
+  max-width: 1200px; /* Limit maximum width for readability */
   background: #fff;
+  font-size: 1.2rem; /* Increase font size for better readability */
+  text-align: left; /* Align text to the left */
 }
 
 th, td {
-  padding: 10px;
+  padding: 15px; /* Increase padding for larger cells */
   border: 1px solid #ccc;
 }
 
 th {
   background: #f9f9f9;
+  font-weight: bold; /* Bold headers */
+}
+
+tr:nth-child(even) {
+  background-color: #f3f3f3; /* Alternate row colors for better readability */
+}
+
+@media (max-width: 768px) {
+  table {
+    font-size: 1rem; /* Reduce font size on smaller screens */
+    width: 100%; /* Make table full-width on small devices */
+  }
+
+  th, td {
+    padding: 10px; /* Reduce padding on smaller screens */
+  }
 }
