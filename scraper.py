@@ -28,9 +28,9 @@ def init_driver():
 def extract_recipe_details(item_url):
     driver = init_driver()
     result = {
-        "ingredients": "N/A",
-        "publish_date": "N/A",
-        "nutrition_facts": "N/A"
+        "ingredients": "Ingredients not found",
+        "publish_date": "Unknown publish date",
+        "nutrition_facts": "Nutrition Facts not found"
     }
     
     try:
@@ -43,7 +43,7 @@ def extract_recipe_details(item_url):
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ul.structured-ingredients__list")))
             ingredients_list = driver.find_elements(By.CSS_SELECTOR, "ul.structured-ingredients__list li")
             ingredients = [item.text.strip() for item in ingredients_list if item.text.strip()]
-            result["ingredients"] = ", ".join(ingredients) if ingredients else "N/A"
+            result["ingredients"] = ", ".join(ingredients) if ingredients else "Ingredients not found"
         except Exception as e:
             print(f"Ingredients not found: {str(e)}")
         
@@ -144,10 +144,10 @@ def main():
                         
                     # Extract basic info from card
                     title = card.find("span", class_="card__title-text")
-                    title = title.text.strip() if title else "N/A"
+                    title = title.text.strip() if title else "Title not found"
                     
                     cooking_time = card.find("span", class_="meta-text__text")
-                    cooking_time = cooking_time.text.strip() if cooking_time else "N/A"
+                    cooking_time = cooking_time.text.strip() if cooking_time else "Unknown cooking time"
                     
                     category = card.find("div", class_="card__content")
                     category = category.get("data-tag", "N/A") if category else "N/A"
@@ -170,12 +170,12 @@ def main():
                     row = [
                         item_url,
                         details.get("title", title),
+                        details["ingredients"],
                         cooking_time,
+                        details["nutrition_facts"],
+                        details["publish_date"],
                         timestamp,
                         category,
-                        details["ingredients"],
-                        details["publish_date"],
-                        details["nutrition_facts"]
                     ]
                     data.append(row)
                     print(f"{i}/{len(futures)}: {title}")
@@ -185,8 +185,8 @@ def main():
         # Save to CSV
         csv_file = "recipes.csv"
         header = [
-            "URL", "Title", "Cooking Time", "Timestamp",
-            "Category", "Ingredients", "Publish Date", "Nutrition Facts"
+            "URL", "Title", "Ingredients", "Cooking Time", "Nutrition Facts", "Publish Date", "Timestamp",
+            "Category" 
         ]
         
         with open(csv_file, mode="w", newline="", encoding="utf-8") as file:
