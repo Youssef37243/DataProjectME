@@ -25,7 +25,7 @@ function createTable(rows) {
   for (let i = 1; i < rows.length; i++) {
     html += "<tr>";
     rows[i].forEach(cell => { 
-      html += `<td style="word-wrap: break-word; max-width: 300px;">${cell}</td>`; // Ensure text wraps
+      html += `<td>${cell}</td>`; // Cells will adjust size based on content
     });
     html += "</tr>";
   }
