@@ -10,6 +10,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import concurrent.futures
+import pandas as pd
 
 def init_driver():
     chrome_options = Options()
@@ -17,7 +18,6 @@ def init_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    # Added user agent and window size
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
     chrome_options.add_argument("window-size=1920,1080")
     
@@ -56,21 +56,17 @@ def extract_recipe_details(item_url):
         
         # Extract nutrition facts
         try:
-            # Scroll to nutrition button
             nutrition_button = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "button.nutrition-modal-label-container"))
             )
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", nutrition_button)
             time.sleep(1)
             
-            # Click using JavaScript
             driver.execute_script("arguments[0].click();", nutrition_button)
             
-            # Wait for modal
             wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-label")))
             time.sleep(1)
             
-            # Extract nutrition data
             nutrition_rows = driver.find_elements(By.CSS_SELECTOR, "div.nutrition-label tbody tr")
             nutrition_data = []
             
@@ -84,7 +80,6 @@ def extract_recipe_details(item_url):
             
             result["nutrition_facts"] = ", ".join(nutrition_data) if nutrition_data else "N/A"
             
-            # Close modal
             try:
                 close_button = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Close']")
                 close_button.click()
@@ -100,11 +95,37 @@ def extract_recipe_details(item_url):
         driver.quit()
         return result
 
-def main():
-    driver = init_driver()
+def get_category_links(driver):
+    print("Extracting category links...")
     try:
-        print("Loading main recipes page...")
-        driver.get("https://www.simplyrecipes.com/recipes-5090746")
+        # Wait for the categories container to load
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.mntl-taxonomysc-child-block__links"))
+        )
+        
+        category_links = []
+        category_elements = driver.find_elements(By.CSS_SELECTOR, "div.mntl-taxonomysc-child-block__links a")[:5]
+        
+        for element in category_elements:
+            href = element.get_attribute("href")
+            text = element.text.strip()
+            if href and href.startswith("https://www.simplyrecipes.com/"):
+                category_links.append((text, href))
+                print(f"Found valid category: {text} -> {href}")
+        
+        print(f"Total categories to process: {len(category_links)}")
+        return category_links
+    
+    except Exception as e:
+        print(f"Error extracting categories: {str(e)}")
+        return []
+
+def extract_recipes_from_category(driver, category_name, category_url):
+    """Extract ALL recipes from a single category page"""
+    print(f"\nProcessing category: {category_name} ({category_url})")
+    try:
+        driver.get(category_url)
+        time.sleep(2)  # Additional wait for category page to load
         
         # Wait for recipes to load
         WebDriverWait(driver, 20).until(
@@ -126,50 +147,46 @@ def main():
         print("Extracting recipe links...")
         soup = BeautifulSoup(driver.page_source, "html.parser")
         recipe_cards = soup.find_all("a", class_="mntl-card-list-items", href=True)
-        print(f"Found {len(recipe_cards)} recipe cards")
+        print(f"Found {len(recipe_cards)} recipes in {category_name}")
         
+        recipes_data = []
         if not recipe_cards:
-            print("No recipe cards found - check if page structure changed")
-            return
+            print(f"No recipes found in category {category_name}")
+            return recipes_data
         
-        data = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             
             for card in recipe_cards:
                 try:
                     item_url = card["href"]
-                    if not item_url.startswith("http"):
+                    if not item_url.startswith("https://www.simplyrecipes.com/"):
                         continue
                         
-                    # Extract basic info from card
                     title = card.find("span", class_="card__title-text")
                     title = title.text.strip() if title else "Title not found"
                     
                     cooking_time = card.find("span", class_="meta-text__text")
                     cooking_time = cooking_time.text.strip() if cooking_time else "Unknown cooking time"
                     
-                    category = card.find("div", class_="card__content")
-                    category = category.get("data-tag", "N/A") if category else "N/A"
-                    
                     futures.append((
                         item_url,
                         title,
                         cooking_time,
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        category,
+                        category_name,
                         executor.submit(extract_recipe_details, item_url)
                     ))
                 except Exception as e:
                     print(f"Error processing card: {str(e)}")
             
-            print("\nProcessing recipe details...")
+            print(f"\nProcessing recipe details for {category_name}...")
             for i, (item_url, title, cooking_time, timestamp, category, future) in enumerate(futures, 1):
                 try:
                     details = future.result()
                     row = [
                         item_url,
-                        details.get("title", title),
+                        title,
                         details["ingredients"],
                         cooking_time,
                         details["nutrition_facts"],
@@ -177,24 +194,95 @@ def main():
                         timestamp,
                         category,
                     ]
-                    data.append(row)
+                    recipes_data.append(row)
                     print(f"{i}/{len(futures)}: {title}")
                 except Exception as e:
                     print(f"Error getting results: {str(e)}")
         
-        # Save to CSV
-        csv_file = "recipes.csv"
+        return recipes_data
+    
+    except Exception as e:
+        print(f"Error processing category {category_name}: {str(e)}")
+        return []
+
+def remove_duplicates(df):
+    """
+    Remove duplicate recipes based on title (case-insensitive comparison).
+    Keeps the first occurrence of each unique recipe.
+    
+    Args:
+        df: Pandas DataFrame containing recipe data
+        
+    Returns:
+        DataFrame with duplicates removed
+    """
+    # Create lowercase version of titles for case-insensitive comparison
+    df['title_lower'] = df['Title'].str.lower()
+    
+    # Identify duplicates (keeping first occurrence)
+    duplicates_mask = df.duplicated(subset=['title_lower'], keep='first')
+    
+    # Count duplicates found
+    duplicate_count = duplicates_mask.sum()
+    if duplicate_count > 0:
+        print(f"Removed {duplicate_count} duplicate recipes")
+    
+    # Filter out duplicates and clean up
+    deduped_df = df[~duplicates_mask].copy()
+    deduped_df.drop(columns=['title_lower'], inplace=True)
+    
+    return deduped_df
+
+def main():
+    driver = init_driver()
+    all_data = []
+    
+    try:
+        print("Loading main recipes page...")
+        driver.get("https://www.simplyrecipes.com/recipes-5090746")
+        time.sleep(3)  # Additional wait for page to stabilize
+        
+        # Get first 4 category links
+        category_links = get_category_links(driver)
+        if not category_links:
+            print("No valid categories found - exiting")
+            return
+        
+        # Process only the first 4 categories
+        for category_name, category_url in category_links[:5]:  # Explicit slice for safety
+            try:
+                print(f"\n{'='*50}")
+                print(f"Starting category: {category_name}")
+                print(f"URL: {category_url}")
+                print(f"{'='*50}")
+                
+                category_data = extract_recipes_from_category(driver, category_name, category_url)
+                all_data.extend(category_data)
+                
+                print(f"\nCompleted category: {category_name}")
+                print(f"Total recipes collected so far: {len(all_data)}")
+            except Exception as e:
+                print(f"\nFailed to process category {category_name}: {str(e)}")
+                continue
+        
+        # Convert to DataFrame and remove duplicates
         header = [
-            "URL", "Title", "Ingredients", "Cooking Time", "Nutrition Facts", "Publish Date", "Timestamp",
-            "Category" 
+            "URL", "Title", "Ingredients", "Cooking Time", "Nutrition Facts", 
+            "Publish Date", "Timestamp", "Category"
         ]
+        df = pd.DataFrame(all_data, columns=header)
+        df = remove_duplicates(df)
         
-        with open(csv_file, mode="w", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow(header)
-            writer.writerows(data)
+        # Save cleaned data to CSV
+        csv_file = "recipes_cleaned.csv"
+        df.to_csv(csv_file, index=False)
         
-        print(f"\nSuccessfully saved {len(data)} recipes to {csv_file}")
+        print(f"\n{'='*50}")
+        print(f"Scraping complete!")
+        print(f"Categories processed: 5")
+        print(f"Unique recipes collected: {len(df)}")
+        print(f"Saved to: {csv_file}")
+        print(f"{'='*50}")
     
     except Exception as e:
         print(f"Main function error: {str(e)}")
