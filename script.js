@@ -1,4 +1,4 @@
-// Replace <USERNAME> and <REPO> with your actual GitHub username and repository name
+// script.js
 const csvUrl = "https://raw.githubusercontent.com/Youssef37243/DataProjectME/main/recipes.csv";
 
 async function fetchCsvData() {
@@ -18,11 +18,15 @@ async function fetchCsvData() {
 
 function createTable(rows) {
   let html = "<table><thead><tr>";
-  rows[0].forEach(header => { html += `<th>${header}</th>`; });
+  rows[0].forEach(header => { 
+    html += `<th>${header}</th>`; 
+  });
   html += "</tr></thead><tbody>";
   for (let i = 1; i < rows.length; i++) {
     html += "<tr>";
-    rows[i].forEach(cell => { html += `<td>${cell}</td>`; });
+    rows[i].forEach(cell => { 
+      html += `<td style="word-wrap: break-word; max-width: 300px;">${cell}</td>`; // Ensure text wraps
+    });
     html += "</tr>";
   }
   html += "</tbody></table>";
