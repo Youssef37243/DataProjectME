@@ -9,156 +9,197 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
+import concurrent.futures
 
-# Set up Selenium WebDriver with headless mode
-chrome_options = Options()
-chrome_options.add_argument("--headless")
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
+def init_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    # Added user agent and window size
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+    chrome_options.add_argument("window-size=1920,1080")
+    
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
 
-service = Service(ChromeDriverManager().install())
-driver = webdriver.Chrome(service=service, options=chrome_options)
-
-# Open the recipes page
-driver.get("https://www.simplyrecipes.com/recipes-5090746")
-wait = WebDriverWait(driver, 10)
-wait.until(EC.presence_of_element_located((By.ID, "taxonomysc_1-0")))
-
-# Scroll to the bottom of the page to trigger lazy loading
-last_height = driver.execute_script("return document.body.scrollHeight")
-while True:
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(3)  # Allow time for content to load
-    new_height = driver.execute_script("return document.body.scrollHeight")
-    if new_height == last_height:
-        break
-    last_height = new_height
-
-# Get the page source after all content is loaded
-page_source = driver.page_source
-
-# Parse the page source with BeautifulSoup
-soup = BeautifulSoup(page_source, "html.parser")
-
-# Find all product elements
-product_elements = soup.find_all("a", class_="mntl-card-list-items")
-
-# Extract product details
-data = []
-for product in product_elements:
+def extract_recipe_details(item_url):
+    driver = init_driver()
+    result = {
+        "ingredients": "N/A",
+        "publish_date": "N/A",
+        "nutrition_facts": "N/A"
+    }
+    
     try:
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"\nProcessing: {item_url}")
+        driver.get(item_url)
+        wait = WebDriverWait(driver, 20)
         
-        # Extract item_url
-        item_url = product.get("href", "N/A")  # Get the href attribute
+        # Extract ingredients
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ul.structured-ingredients__list")))
+            ingredients_list = driver.find_elements(By.CSS_SELECTOR, "ul.structured-ingredients__list li")
+            ingredients = [item.text.strip() for item in ingredients_list if item.text.strip()]
+            result["ingredients"] = ", ".join(ingredients) if ingredients else "N/A"
+        except Exception as e:
+            print(f"Ingredients not found: {str(e)}")
         
-        # Extract title
-        title_element = product.find("span", class_="card__title-text")
-        title = title_element.text.strip() if title_element else "N/A"
+        # Extract publish date
+        try:
+            publish_date = driver.find_element(By.CSS_SELECTOR, "div.mntl-attribution__item-date").text.strip()
+            result["publish_date"] = publish_date
+        except Exception as e:
+            print(f"Publish date not found: {str(e)}")
         
-        # Extract category
-        category_element = product.find("div", class_="card__content")
-        category = category_element.get("data-tag", "N/A") if category_element else "N/A"
-
-        # Extract ingredients, nutrition facts, and publish dates from the item URL
-        ingredients = ["N/A"]
-        nutrition_facts = {"N/A": "N/A"}
-        publish_dates = ["N/A"]
-        cooking_time = "N/A"
-
-        if item_url != "N/A":
+        # Extract nutrition facts
+        try:
+            # Scroll to nutrition button
+            nutrition_button = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "button.nutrition-modal-label-container"))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", nutrition_button)
+            time.sleep(1)
+            
+            # Click using JavaScript
+            driver.execute_script("arguments[0].click();", nutrition_button)
+            
+            # Wait for modal
+            wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "div.nutrition-label")))
+            time.sleep(1)
+            
+            # Extract nutrition data
+            nutrition_rows = driver.find_elements(By.CSS_SELECTOR, "div.nutrition-label tbody tr")
+            nutrition_data = []
+            
+            for row in nutrition_rows:
+                cells = row.find_elements(By.TAG_NAME, "td")
+                if len(cells) >= 2:
+                    nutrient = cells[0].text.strip()
+                    value = cells[1].text.strip()
+                    if nutrient and value:
+                        nutrition_data.append(f"{nutrient}: {value}")
+            
+            result["nutrition_facts"] = ", ".join(nutrition_data) if nutrition_data else "N/A"
+            
+            # Close modal
             try:
-                # Open the item URL in a new tab
-                driver.execute_script(f"window.open('{item_url}', '_blank');")
-                driver.switch_to.window(driver.window_handles[1])  # Switch to the new tab
-
-                # Wait for the ingredients section to load
-                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "structured-ingredients__list")))
-
-                # Extract Ingredients
-                try:
-                    ingredients = [
-                        elem.text.strip()
-                        for elem in driver.find_elements(By.CLASS_NAME, "structured-ingredients__list-item")
-                    ]
-                except:
-                    ingredients = ["N/A"]
-
-                # Extract nutrition facts
-                try:
-                    nutrition_facts = {}
-                    # Wait for the nutrition section to load
-                    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "nutritional-guidelines-block")))
-                    nutrition_section = driver.find_element(By.CLASS_NAME, "nutritional-guidelines-block")
-                    
-                    # Extract summary nutrition table
-                    summary_table = nutrition_section.find_element(By.CLASS_NAME, "nutrition-info__table--body")
-                    if summary_table:
-                        rows = summary_table.find_elements(By.CLASS_NAME, "nutrition-info__table--row")
-                        for row in rows:
-                            cells = row.find_elements(By.TAG_NAME, "td")
-                            if len(cells) == 2:
-                                key = cells[1].text.strip()  # Nutrient name
-                                value = cells[0].text.strip()  # Nutrient value
-                                nutrition_facts[key] = value
-
-                    # Extract detailed nutrition table
-                    detailed_table = nutrition_section.find_element(By.CLASS_NAME, "nutrition-label")
-                    if detailed_table:
-                        rows = detailed_table.find_elements(By.TAG_NAME, "tr")
-                        for row in rows:
-                            nutrient_tag = row.find_element(By.TAG_NAME, "th")
-                            if nutrient_tag:
-                                nutrient_name = nutrient_tag.text.strip()
-                                value = row.text.replace(nutrient_name, "").strip()  # Remove name to get value
-                                nutrition_facts[nutrient_name] = value
-                except:
-                    nutrition_facts = {"N/A": "N/A"}
-
-                # Extract publish dates
-                try:
-                    publish_dates = [
-                        elem.text.strip()
-                        for elem in driver.find_elements(By.CLASS_NAME, "mntl-attribution__item-date")
-                    ]
-                except:
-                    publish_dates = ["N/A"]
-
-                # Extract cooking time
-                try:
-                    cooking_time_element = driver.find_element(By.CSS_SELECTOR, "span.meta-text__text")
-                    cooking_time = cooking_time_element.text.strip() if cooking_time_element else "N/A"
-                except:
-                    cooking_time = "N/A"
-
-                # Close the tab and switch back to the main window
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
-
-            except Exception as e:
-                print(f"Error extracting details from {item_url}: {e}")
-                # Close the tab and switch back to the main window in case of an error
-                if len(driver.window_handles) > 1:
-                    driver.close()
-                    driver.switch_to.window(driver.window_handles[0])
-
-        # Append data
-        data.append([item_url, title, ingredients, cooking_time, nutrition_facts, publish_dates, timestamp, category])
+                close_button = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Close']")
+                close_button.click()
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"Nutrition facts not available: {str(e)}")
+            
     except Exception as e:
-        print(f"Error extracting product: {e}")
+        print(f"Error processing recipe: {str(e)}")
+    finally:
+        driver.quit()
+        return result
 
-# Close the browser
-driver.quit()
+def main():
+    driver = init_driver()
+    try:
+        print("Loading main recipes page...")
+        driver.get("https://www.simplyrecipes.com/recipes-5090746")
+        
+        # Wait for recipes to load
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a.mntl-card-list-items"))
+        )
+        
+        print("Scrolling to load all recipes...")
+        scroll_pause_time = 2
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        
+        while True:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(scroll_pause_time)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
+        
+        print("Extracting recipe links...")
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        recipe_cards = soup.find_all("a", class_="mntl-card-list-items", href=True)
+        print(f"Found {len(recipe_cards)} recipe cards")
+        
+        if not recipe_cards:
+            print("No recipe cards found - check if page structure changed")
+            return
+        
+        data = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            
+            for card in recipe_cards:
+                try:
+                    item_url = card["href"]
+                    if not item_url.startswith("http"):
+                        continue
+                        
+                    # Extract basic info from card
+                    title = card.find("span", class_="card__title-text")
+                    title = title.text.strip() if title else "N/A"
+                    
+                    cooking_time = card.find("span", class_="meta-text__text")
+                    cooking_time = cooking_time.text.strip() if cooking_time else "N/A"
+                    
+                    category = card.find("div", class_="card__content")
+                    category = category.get("data-tag", "N/A") if category else "N/A"
+                    
+                    futures.append((
+                        item_url,
+                        title,
+                        cooking_time,
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        category,
+                        executor.submit(extract_recipe_details, item_url)
+                    ))
+                except Exception as e:
+                    print(f"Error processing card: {str(e)}")
+            
+            print("\nProcessing recipe details...")
+            for i, (item_url, title, cooking_time, timestamp, category, future) in enumerate(futures, 1):
+                try:
+                    details = future.result()
+                    row = [
+                        item_url,
+                        details.get("title", title),
+                        cooking_time,
+                        timestamp,
+                        category,
+                        details["ingredients"],
+                        details["publish_date"],
+                        details["nutrition_facts"]
+                    ]
+                    data.append(row)
+                    print(f"{i}/{len(futures)}: {title}")
+                except Exception as e:
+                    print(f"Error getting results: {str(e)}")
+        
+        # Save to CSV
+        csv_file = "recipes.csv"
+        header = [
+            "URL", "Title", "Cooking Time", "Timestamp",
+            "Category", "Ingredients", "Publish Date", "Nutrition Facts"
+        ]
+        
+        with open(csv_file, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(header)
+            writer.writerows(data)
+        
+        print(f"\nSuccessfully saved {len(data)} recipes to {csv_file}")
+    
+    except Exception as e:
+        print(f"Main function error: {str(e)}")
+    finally:
+        driver.quit()
 
-# Save data to CSV
-csv_file = "all_recipes.csv"
-header = ["item_url", "title", "ingredients", "cooking_time", "nutrition_facts", "publish_dates", "timestamp", "category"]
-
-with open(csv_file, mode="a", newline="", encoding="utf-8") as file:
-    writer = csv.writer(file)
-    if file.tell() == 0:
-        writer.writerow(header)  # Write header only if file is empty
-    writer.writerows(data)
-
-print(f"Scraped {len(data)} products and saved to {csv_file}.")
+if __name__ == "__main__":
+    main()
