@@ -14,16 +14,19 @@ h1 {
 table {
   margin: 0 auto;
   border-collapse: collapse;
-  width: 95%; /* Make the table wider */
-  max-width: 1200px; /* Limit maximum width for readability */
+  width: auto; /* Auto width to fit content */
+  min-width: 50%; /* Ensure a minimum width for small tables */
+  max-width: 100%; /* Prevent overflow on large screens */
   background: #fff;
   font-size: 1.2rem; /* Increase font size for better readability */
   text-align: left; /* Align text to the left */
+  table-layout: auto; /* Allow columns to adjust based on content */
 }
 
 th, td {
-  padding: 15px; /* Increase padding for larger cells */
+  padding: 10px 15px; /* Adjust padding for cells */
   border: 1px solid #ccc;
+  white-space: nowrap; /* Prevent text wrapping */
 }
 
 th {
@@ -42,6 +45,6 @@ tr:nth-child(even) {
   }
 
   th, td {
-    padding: 10px; /* Reduce padding on smaller screens */
+    padding: 8px 10px; /* Reduce padding on smaller screens */
   }
 }
